@@ -1,0 +1,17 @@
+{
+  "name": "build",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@vscode/markdown-it-katex": "^1.1.2",
+    "katex": "^0.16.47",
+    "markdown-it": "^14.3.0"
+  }
+}
