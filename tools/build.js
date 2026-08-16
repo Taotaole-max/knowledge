@@ -67,7 +67,7 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
 
 const katex = require('katex');
 
-const fixes = { fence: 0, inline: 0, eqnarray: 0, subscript: 0, strayProse: 0, adjacent: 0, zwsp: 0, backtick: 0 };
+const fixes = { fence: 0, inline: 0, eqnarray: 0, subscript: 0, strayProse: 0, adjacent: 0, zwsp: 0, backtick: 0, flanking: 0 };
 
 // 占位符用 U+0001 包裹：正文里绝不会出现该控制符，因此不会像 "F1 值"、"C4.5"
 // 那样被朴素记号误伤。还原时同样按此格式匹配。
@@ -80,6 +80,41 @@ const ph = (kind, i) => `\u0001${kind}${i}\u0001`;
  * 写法。没有空行时 markdown 会把整段并成一个段落，`$$` 于是走行内规则、跟错误的
  * 定界符配对，把后面成片的中文一起吞进数学模式——渲染出来就是一团红色的乱码。
  */
+/**
+ * 让行内公式满足 CommonMark 的 flanking 规则，否则 GitHub 不把 `$` 当作公式定界符。
+ *
+ * 规则要点：起始 `$` 后面不能是空白；若后面是标点（LaTeX 几乎总是以 `\` 开头），
+ * 则前面必须是空白或标点。中文正文里 `参数$\beta$` 的 `$` 前面是汉字（算字母），
+ * 于是不成立，GitHub 直接把整段按原样输出——这正是 31% 的行内公式在 GitHub 上
+ * 显示为裸 LaTeX 的原因。收尾的 `$` 有对称的规则。
+ *
+ * 处理办法是先去掉定界符内侧多余的空格（`$ 4 $` 这种同样会让规则失败），
+ * 再仅在确有必要的一侧补一个空格。中文与公式之间加空格本身也更符合排版习惯。
+ */
+const ASCII_PUNCT = '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~';
+const isWs = (c) => c === '' || /\s/.test(c);
+const isPun = (c) => c !== '' && (ASCII_PUNCT.includes(c) || /\p{P}/u.test(c));
+
+const leftFlanking = (prev, next) =>
+  !isWs(next) && (!isPun(next) || isWs(prev) || isPun(prev));
+const rightFlanking = (prev, next) =>
+  !isWs(prev) && (!isPun(prev) || isWs(next) || isPun(next));
+
+function padInlineMathForGitHub(text) {
+  return text.replace(/(?<!\\)\$([^$\n]+?)(?<!\\)\$/g, (m, body, offset) => {
+    const inner = body.trim();
+    if (!inner) return m;
+
+    const prev = offset > 0 ? text[offset - 1] : '';
+    const next = text[offset + m.length] || '';
+    const needLeft = !leftFlanking(prev, inner[0]);
+    const needRight = !rightFlanking(inner[inner.length - 1], next);
+
+    if (needLeft || needRight || inner !== body) fixes.flanking++;
+    return (needLeft ? ' ' : '') + '$' + inner + '$' + (needRight ? ' ' : '');
+  });
+}
+
 /**
  * 解开被反引号包住的公式。个别地方写成 `` `$U,W,b$` ``，会渲染成等宽代码
  * 而不是公式，读起来同样是一串裸 LaTeX。仅当反引号内容整体就是一条公式时才解开，
@@ -198,18 +233,43 @@ function repairBlock(raw) {
  * `...使用$\nL(Y, f(x))$来表示` 这类断行会让整段 LaTeX 以源码形式裸露出来。
  */
 function joinBrokenInlineMath(text) {
-  const lines = text.split('\n');
-  // 一行里未转义的 $ 是奇数个，说明这行的行内公式没闭合。
-  const unbalanced = (l) => ((l.replace(/\\\$/g, '').match(/\$/g) || []).length % 2) === 1;
+  // 一行里"落单"的 $ 个数：先去掉行内代码和已成对的公式，剩下的就是没闭合的。
+  const orphans = (l) => {
+    let t = l.replace(/`[^`\n]*`/g, '');
+    t = t.replace(/(?<!\\)\$\$/g, '');
+    t = t.replace(/(?<!\\)\$[^$\n]+?(?<!\\)\$/g, '');
+    return (t.match(/(?<!\\)\$/g) || []).length;
+  };
+  // 合并后每条公式都必须能被 KaTeX 解析，否则说明这两个 $ 本来就不是一对。
+  const mathOk = (s) => {
+    for (const m of s.matchAll(/(?<!\\)\$([^$\n]+?)(?<!\\)\$/g)) {
+      try {
+        katex.renderToString(m[1], { strict: false, throwOnError: true });
+      } catch (e) {
+        return false;
+      }
+    }
+    return true;
+  };
 
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (!unbalanced(lines[i]) || !unbalanced(lines[i + 1])) continue;
-    // 只合并紧邻的两行，且断口处确实是 LaTeX，避免误伤普通段落。
-    if (!/[\\^_{}]/.test(lines[i] + lines[i + 1])) continue;
-    lines[i] = lines[i].replace(/\s+$/, '') + ' ' + lines[i + 1].replace(/^\s+/, '');
-    lines.splice(i + 1, 1);
-    fixes.inline++;
-    i--;
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (orphans(lines[i]) !== 1) continue;
+    for (let j = i + 1; j < Math.min(i + 9, lines.length); j++) {
+      if (lines[j].trim() === '') break; // 空行是段落边界，不跨越
+      if (orphans(lines[j]) !== 1) continue;
+
+      const merged = lines
+        .slice(i, j + 1)
+        .map((l, k) => (k === 0 ? l.replace(/\s+$/, '') : l.trim()))
+        .join(' ');
+      // 校验这道门把 shell 里的 `echo $NDK_ROOT` 之类挡在外面。
+      if (orphans(merged) === 0 && mathOk(merged)) {
+        lines.splice(i, j - i + 1, merged);
+        fixes.inline++;
+      }
+      break;
+    }
   }
   return lines.join('\n');
 }
@@ -248,6 +308,8 @@ function normalize(src) {
   text = splitAdjacentInline(text);
   text = normalizeDisplayMath(text, display);
   text = joinBrokenInlineMath(text);
+  text = stripZwspInMath(text);
+  text = padInlineMathForGitHub(text);
 
   // 补空行的动作会叠加，这里折叠成最多一个空行，保证反复构建的结果稳定。
   // 代码块此时仍是占位符，块内的空行不受影响。
@@ -443,4 +505,5 @@ console.log(`页面: ${CHAPTERS.length} 个章节页 + 1 个首页；回写 Mark
 console.log(`源文本修正: 块级公式定界 ${fixes.fence}、跨行行内公式 ${fixes.inline}、` +
   `eqnarray→aligned ${fixes.eqnarray}、下标补花括号 ${fixes.subscript}、` +
   `公式块内混入的正文 ${fixes.strayProse}、相邻行内公式拆分 ${fixes.adjacent}、` +
-  `公式内零宽空格 ${fixes.zwsp}、反引号包裹的公式 ${fixes.backtick}`);
+  `公式内零宽空格 ${fixes.zwsp}、反引号包裹的公式 ${fixes.backtick}、` +
+  `行内公式定界符间距 ${fixes.flanking}`);
