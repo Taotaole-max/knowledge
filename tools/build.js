@@ -67,7 +67,7 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
 
 const katex = require('katex');
 
-const fixes = { fence: 0, inline: 0, eqnarray: 0, subscript: 0, strayProse: 0, adjacent: 0 };
+const fixes = { fence: 0, inline: 0, eqnarray: 0, subscript: 0, strayProse: 0, adjacent: 0, zwsp: 0, backtick: 0 };
 
 // 占位符用 U+0001 包裹：正文里绝不会出现该控制符，因此不会像 "F1 值"、"C4.5"
 // 那样被朴素记号误伤。还原时同样按此格式匹配。
@@ -80,6 +80,34 @@ const ph = (kind, i) => `\u0001${kind}${i}\u0001`;
  * 写法。没有空行时 markdown 会把整段并成一个段落，`$$` 于是走行内规则、跟错误的
  * 定界符配对，把后面成片的中文一起吞进数学模式——渲染出来就是一团红色的乱码。
  */
+/**
+ * 解开被反引号包住的公式。个别地方写成 `` `$U,W,b$` ``，会渲染成等宽代码
+ * 而不是公式，读起来同样是一串裸 LaTeX。仅当反引号内容整体就是一条公式时才解开，
+ * 真正想展示 $ 符号的代码片段不受影响。
+ */
+function unwrapBacktickMath(text) {
+  return text.replace(/`\s*(\$[^`\n]+\$)\s*`/g, (m, math) => {
+    fixes.backtick++;
+    return math;
+  });
+}
+
+/**
+ * 清掉公式内部的零宽空格 (U+200B)。
+ *
+ * 原稿是从某个编辑器导出的，行内公式普遍写成 `$\mu<U+200B>$`。KaTeX 会把它当成
+ * 一个没有字形的字符照常渲染，但 GitHub 自带的数学渲染器把闭合 `$` 前的零宽空格
+ * 视作空白，于是该定界符不闭合、跟后面的 `$` 错误配对，整段 LaTeX 就裸露成源码。
+ * 这正是在 GitHub 上直接看 .md 时仍然"乱码"的原因。
+ */
+function stripZwspInMath(text) {
+  return text.replace(/(?<!\\)\$([^$\n]+?)(?<!\\)\$/g, (m, body) => {
+    if (!body.includes('\u200b')) return m;
+    fixes.zwsp += (body.match(/\u200b/g) || []).length;
+    return '$' + body.replace(/\u200b/g, '') + '$';
+  });
+}
+
 /**
  * 拆开"紧挨着的两个行内公式"。原稿里有 `$C_2=8$$(满足C_1>C_2)$` 这种写法，
  * 前一个公式的结束符和后一个的起始符黏在一起，看上去像块级定界符。
@@ -116,7 +144,9 @@ function normalizeDisplayMath(text, store) {
     const close = positions[p + 1];
     out += text.slice(cursor, open);
 
-    const { math, tail } = repairBlock(text.slice(open + 2, close));
+    const raw = text.slice(open + 2, close);
+    fixes.zwsp += (raw.match(/\u200b/g) || []).length;
+    const { math, tail } = repairBlock(raw.replace(/\u200b/g, ''));
     out += `\n\n${ph('D', store.push(math) - 1)}\n\n`;
     // 被误写进公式块里的正文，原样放回块后面当普通段落。
     if (tail.length) out += tail.join('\n').trim() + '\n\n';
@@ -207,15 +237,21 @@ function normalize(src) {
   const display = [];
 
   // 代码块与行内代码先挪走，公式修正绝不能碰它们（例如 shell 里的 $NDK_ROOT）。
-  let text = src
+  // 先解开反引号里的公式，否则它们会被当成行内代码保护起来。
+  let text = unwrapBacktickMath(src)
     .replace(/^```[\s\S]*?^```/gm, (m) => `F${fences.push(m) - 1}`)
     .replace(/`[^`\n]*`/g, (m) => `C${codes.push(m) - 1}`);
 
   text = eqnarrayToAligned(text);
   text = braceSubscripts(text);
+  text = stripZwspInMath(text);
   text = splitAdjacentInline(text);
   text = normalizeDisplayMath(text, display);
   text = joinBrokenInlineMath(text);
+
+  // 补空行的动作会叠加，这里折叠成最多一个空行，保证反复构建的结果稳定。
+  // 代码块此时仍是占位符，块内的空行不受影响。
+  text = text.replace(/\n{3,}/g, '\n\n');
 
   return text
     .replace(/D(\d+)/g, (m, i) => `$$\n${display[+i]}\n$$`)
@@ -231,6 +267,7 @@ const esc = (s) => String(s)
 function renderChapter(src) {
   // [TOC] 是给旧编辑器用的占位符，静态站点自己生成目录。
   src = normalize(src.replace(/^\s*\[TOC\]\s*$/gim, ''));
+  const normalized = src;
 
   const env = {};
   const tokens = md.parse(src, env);
@@ -249,7 +286,7 @@ function renderChapter(src) {
     if (level === 2 || level === 3) toc.push({ id, level, text });
   }
 
-  return { html: md.renderer.render(tokens, md.options, env), toc };
+  return { html: md.renderer.render(tokens, md.options, env), toc, normalized };
 }
 
 // ------------------------------------------------------------------ templates
@@ -323,11 +360,19 @@ for (const f of fs.readdirSync(path.join(katexDist, 'fonts'))) {
 fs.copyFileSync(path.join(__dirname, 'style.css'), path.join(ASSETS, 'style.css'));
 
 const stats = [];
+let rewritten = 0;
 
 CHAPTERS.forEach((c, i) => {
   const srcPath = path.join(ROOT, c.dir, c.file);
   const src = fs.readFileSync(srcPath, 'utf8');
-  const { html, toc } = renderChapter(src);
+  const { html, toc, normalized } = renderChapter(src);
+
+  // 把修正后的 Markdown 写回源文件：GitHub 用自己的渲染器预览 .md，
+  // 只有源文件本身是干净的，在 GitHub 上直接看才不会再出现裸 LaTeX。
+  if (normalized !== src) {
+    fs.writeFileSync(srcPath, normalized);
+    rewritten++;
+  }
   const failed = (html.match(/katex-error/g) || []).length;
 
   const tocHtml = toc.length
@@ -394,7 +439,8 @@ console.log('-'.repeat(54));
 console.log('合计'.padEnd(30) + String(totalF).padStart(8) + String(totalI).padStart(8) +
   String(stats.reduce((a, b) => a + b.failed, 0)).padStart(8));
 console.log(`\nassets: katex.min.css + ${fontCount} 个字体 + style.css`);
-console.log(`页面: ${CHAPTERS.length} 个章节页 + 1 个首页`);
+console.log(`页面: ${CHAPTERS.length} 个章节页 + 1 个首页；回写 Markdown 源文件 ${rewritten} 个`);
 console.log(`源文本修正: 块级公式定界 ${fixes.fence}、跨行行内公式 ${fixes.inline}、` +
   `eqnarray→aligned ${fixes.eqnarray}、下标补花括号 ${fixes.subscript}、` +
-  `公式块内混入的正文 ${fixes.strayProse}、相邻行内公式拆分 ${fixes.adjacent}`);
+  `公式块内混入的正文 ${fixes.strayProse}、相邻行内公式拆分 ${fixes.adjacent}、` +
+  `公式内零宽空格 ${fixes.zwsp}、反引号包裹的公式 ${fixes.backtick}`);
