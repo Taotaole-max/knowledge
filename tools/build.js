@@ -67,7 +67,7 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
 
 const katex = require('katex');
 
-const fixes = { fence: 0, inline: 0, eqnarray: 0, subscript: 0, strayProse: 0, adjacent: 0, zwsp: 0, backtick: 0, flanking: 0 };
+const fixes = { fence: 0, inline: 0, eqnarray: 0, subscript: 0, strayProse: 0, adjacent: 0, zwsp: 0, backtick: 0, flanking: 0, backtickForm: 0 };
 
 // 占位符用 U+0001 包裹：正文里绝不会出现该控制符，因此不会像 "F1 值"、"C4.5"
 // 那样被朴素记号误伤。还原时同样按此格式匹配。
@@ -80,6 +80,45 @@ const ph = (kind, i) => `\u0001${kind}${i}\u0001`;
  * 写法。没有空行时 markdown 会把整段并成一个段落，`$$` 于是走行内规则、跟错误的
  * 定界符配对，把后面成片的中文一起吞进数学模式——渲染出来就是一团红色的乱码。
  */
+/**
+ * 对会被 markdown 自身语法改写的公式，改用 GitHub 的 `$` + 反引号写法。
+ *
+ * 三种情况会让公式在 GitHub 上失效，且都无法靠补空格解决：
+ *   - `$S^{-1}_{w} S_b$` 与同行另一条公式的 `_` 配对成斜体
+ *   - `$7*7*3$` 的 `*` 同理配对成斜体
+ *   - 表格单元格里 `\\` 被表格解析器吃掉一个，矩阵换行失效
+ *
+ * 判据不靠人工枚举：把该行按普通 markdown 渲染一遍，若公式原文没能原样保留，
+ * 就说明 markdown 语法动了它。这类公式改写成 $`...`$ ——这是 GitHub 官方
+ * 文档给出的写法，实测三类问题都能修好（其余候选写法均无效）。
+ *
+ * 只对确实脆弱的那少数几条这么做：该写法是 GitHub 专有的，
+ * 其他编辑器不认，因此不宜全书铺开。
+ */
+const mdPlain = require('markdown-it')({ html: true });
+
+const decodeEntities = (s) => s
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+  .replace(/&amp;/g, '&');
+
+function toBacktickWhenFragile(text) {
+  return text.split('\n').map((line) => {
+    if (!line.includes('$')) return line;
+    const rendered = decodeEntities(mdPlain.renderInline(line));
+    return line.replace(/(?<!\\)\$([^$\n]+?)(?<!\\)\$/g, (m, body) => {
+      if (rendered.includes(m)) return m; // markdown 没动它，保持通用写法
+      fixes.backtickForm++;
+      return '$`' + body + '`$';
+    });
+  }).join('\n');
+}
+
+/** 读回上一次构建写下的 $`...`$，还原成普通写法后再走一遍流水线（保证幂等）。 */
+function unwrapGithubMath(text) {
+  return text.replace(/\$`([^`\n]+?)`\$/g, (m, body) => '$' + body + '$');
+}
+
 /**
  * 保证行内公式的起始 `$` 前面是空白或行首，否则 GitHub 不当它是公式定界符。
  *
@@ -295,7 +334,7 @@ function normalize(src) {
 
   // 代码块与行内代码先挪走，公式修正绝不能碰它们（例如 shell 里的 $NDK_ROOT）。
   // 先解开反引号里的公式，否则它们会被当成行内代码保护起来。
-  let text = unwrapBacktickMath(src)
+  let text = unwrapBacktickMath(unwrapGithubMath(src))
     .replace(/^```[\s\S]*?^```/gm, (m) => `F${fences.push(m) - 1}`)
     .replace(/`[^`\n]*`/g, (m) => `C${codes.push(m) - 1}`);
 
@@ -307,6 +346,7 @@ function normalize(src) {
   text = joinBrokenInlineMath(text);
   text = stripZwspInMath(text);
   text = padInlineMathForGitHub(text);
+  text = toBacktickWhenFragile(text);
 
   // 补空行的动作会叠加，这里折叠成最多一个空行，保证反复构建的结果稳定。
   // 代码块此时仍是占位符，块内的空行不受影响。
@@ -328,8 +368,10 @@ function renderChapter(src) {
   src = normalize(src.replace(/^\s*\[TOC\]\s*$/gim, ''));
   const normalized = src;
 
+  // KaTeX 插件不认 $`...`$，渲染前先还原成普通写法。
+  const forHtml = unwrapGithubMath(src);
   const env = {};
-  const tokens = md.parse(src, env);
+  const tokens = md.parse(forHtml, env);
   const toc = [];
   let n = 0;
 
@@ -503,4 +545,4 @@ console.log(`源文本修正: 块级公式定界 ${fixes.fence}、跨行行内�
   `eqnarray→aligned ${fixes.eqnarray}、下标补花括号 ${fixes.subscript}、` +
   `公式块内混入的正文 ${fixes.strayProse}、相邻行内公式拆分 ${fixes.adjacent}、` +
   `公式内零宽空格 ${fixes.zwsp}、反引号包裹的公式 ${fixes.backtick}、` +
-  `行内公式定界符间距 ${fixes.flanking}`);
+  `行内公式定界符间距 ${fixes.flanking}、改用 GitHub 反引号写法 ${fixes.backtickForm}`);

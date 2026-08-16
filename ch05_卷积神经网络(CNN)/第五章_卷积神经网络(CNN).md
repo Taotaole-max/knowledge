@@ -63,12 +63,12 @@ $$
 
 |         卷积作用         |                            卷积核                            |                    卷积后图像                     |
 | :----------------------: | :----------------------------------------------------------: | :-----------------------------------------------: |
-|         输出原图         | $\begin{bmatrix} 0 & 0 & 0 \\ 0 & 1 & 0 \\ 0 & 0 & 0 \end{bmatrix}$ |         ![origin_img](img/ch5/cat.jpg)          |
-| 边缘检测（突出边缘差异） | $\begin{bmatrix} 1 & 0 & -1 \\ 0 & 0 & 0 \\ -1 & 0 & 1 \end{bmatrix}$ |   ![edgeDetect-1](img/ch5/cat-edgeDetect.jpg)   |
-|  边缘检测（突出中间值）  | $\begin{bmatrix} -1 & -1 & -1 \\ -1 & 8 & -1 \\ -1 & -1 & -1 \end{bmatrix}$ |  ![edgeDetect-2](img/ch5/cat-edgeDetect-2.jpg)  |
-|         图像锐化         | $\begin{bmatrix} 0 & -1 & 0 \\ -1 & 5 & -1 \\ 0 & -1 & 0 \end{bmatrix}$ |     ![sharpen_img](img/ch5/cat-sharpen.jpg)     |
-|         方块模糊         | $\begin{bmatrix} 1 & 1 & 1 \\ 1 & 1 & 1 \\ 1 & 1 & 1 \end{bmatrix} \times \frac{1}{9}$ |      ![box_blur](img/ch5/cat-boxblur.jpg)       |
-|         高斯模糊         | $\begin{bmatrix} 1 & 2 & 1 \\ 2 & 4 & 2 \\ 1 & 2 & 1 \end{bmatrix} \times \frac{1}{16}$ | ![gaussian_blur](img/ch5/cat-blur-gaussian.jpg) |
+|         输出原图         | $`\begin{bmatrix} 0 & 0 & 0 \\ 0 & 1 & 0 \\ 0 & 0 & 0 \end{bmatrix}`$ |         ![origin_img](img/ch5/cat.jpg)          |
+| 边缘检测（突出边缘差异） | $`\begin{bmatrix} 1 & 0 & -1 \\ 0 & 0 & 0 \\ -1 & 0 & 1 \end{bmatrix}`$ |   ![edgeDetect-1](img/ch5/cat-edgeDetect.jpg)   |
+|  边缘检测（突出中间值）  | $`\begin{bmatrix} -1 & -1 & -1 \\ -1 & 8 & -1 \\ -1 & -1 & -1 \end{bmatrix}`$ |  ![edgeDetect-2](img/ch5/cat-edgeDetect-2.jpg)  |
+|         图像锐化         | $`\begin{bmatrix} 0 & -1 & 0 \\ -1 & 5 & -1 \\ 0 & -1 & 0 \end{bmatrix}`$ |     ![sharpen_img](img/ch5/cat-sharpen.jpg)     |
+|         方块模糊         | $`\begin{bmatrix} 1 & 1 & 1 \\ 1 & 1 & 1 \\ 1 & 1 & 1 \end{bmatrix} \times \frac{1}{9}`$ |      ![box_blur](img/ch5/cat-boxblur.jpg)       |
+|         高斯模糊         | $`\begin{bmatrix} 1 & 2 & 1 \\ 2 & 4 & 2 \\ 1 & 2 & 1 \end{bmatrix} \times \frac{1}{16}`$ | ![gaussian_blur](img/ch5/cat-blur-gaussian.jpg) |
 
 ## 5.3 卷积层有哪些基本参数？
 
@@ -86,7 +86,7 @@ $$
 
 > 卷积操作维度变换公式：
 >
-> $O_d =\begin{cases} \lceil \frac{(I_d - k_{size})+ 1)}{s}\rceil ,& \text{padding=VALID}\\ \lceil \frac{I_d}{s}\rceil,&\text{padding=SAME} \end{cases}$
+> $`O_d =\begin{cases} \lceil \frac{(I_d - k_{size})+ 1)}{s}\rceil ,& \text{padding=VALID}\\ \lceil \frac{I_d}{s}\rceil,&\text{padding=SAME} \end{cases}`$
 >
 > 其中， $I_d$ 为输入维度， $O_d$ 为输出维度， $k_{size}$ 为卷积核大小， $s$ 为步长
 
