@@ -107,6 +107,10 @@ node build.js
 - 未收录：`English version/`（只翻译到第 4 章，且体积占 41 MB）、`.docx` 文件、原 docsify 站点文件。
 - Markdown 源文件保留在 `ch*/`，正文文字未改，仅规范化了公式写法；全部插图（571 张）均为本地路径。
 
+## 延伸资源
+
+- [从零手写 · Build Your Own X](从零手写_build-your-own-x.md) —— "自己造一遍才算真懂" 的学习法速查，附 [build-your-own-x](https://github.com/codecrafters-io/build-your-own-x) 分类导航和 ML 方向推荐路径。
+
 ## 许可
 
 上游项目采用 **GPL-3.0**，本仓库沿用同一许可，`LICENSE` 原样保留。
