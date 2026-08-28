@@ -1,3 +1,11 @@
+---
+标题: 从零手写 · Build Your Own X
+标签: [学习方法, 项目式学习, 费曼, 资源索引]
+创建: 2026-08-28
+更新: 2026-08-29
+来源: https://github.com/codecrafters-io/build-your-own-x
+---
+
 # 从零手写 · Build Your Own X
 
 > 学习法速查。核心理念：**"What I cannot create, I do not understand."**（费曼）
